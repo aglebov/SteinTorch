@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Generated figures
+Examples/**/*.pdf
+
 # C extensions
 *.so
 

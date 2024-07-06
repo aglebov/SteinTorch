@@ -235,30 +235,36 @@ class GradientFreeKSD(KSD):
             q_scores = score_q
         else:
             q_scores = score_q(sample)
+        assert q_scores.ndim == 2
 
         if type(log_q) is torch.Tensor:
             log_q_sample = log_q
         else:
             log_q_sample = log_q(sample)
+        assert log_q_sample.ndim == 2
 
         if type(log_p) is torch.Tensor:
             log_p_sample = log_p
         else:
             log_p_sample = log_p(sample)
+        assert log_p_sample.ndim == 2
 
         if no_grad is True:
             log_p_sample = log_p_sample.detach()
             log_q_sample = log_q_sample.detach()
             q_scores = q_scores.detach()
 
-        score_prods = (q_scores.unsqueeze(1) * q_scores)
+        score_prods = q_scores @ q_scores.T
         diffs = sample.unsqueeze(1) - sample
         score_diffs = q_scores.unsqueeze(1) - q_scores
-        score_diff_prod = torch.bmm(diffs.view(N * N, 1, d), score_diffs.view(N * N, d, 1)).reshape(N, N)
-        dists = torch.cdist(sample, sample).pow(2)
+        score_diff_prod = torch.bmm(
+            diffs.view(N * N, 1, d),
+            score_diffs.view(N * N, d, 1),
+        ).reshape(N, N)
+        dists_squared = torch.cdist(sample, sample).pow(2)
 
         log_q_p = log_q_sample - log_p_sample
-        log_qp_diff = log_q_p.unsqueeze(1) + log_q_p
+        log_qp_diff = (log_q_p.unsqueeze(1) + log_q_p).squeeze()
 
         if clamp_qp is not None:
             clamped_diff = torch.clamp(log_qp_diff, min=-clamp_qp[0], max=clamp_qp[1])
@@ -267,15 +273,14 @@ class GradientFreeKSD(KSD):
             coeff = log_qp_diff.exp()
 
         PRECON_SIZE = precon.size()
-        if len(PRECON_SIZE) == 1 and PRECON_SIZE[0] == 1:
-            k = -4 * beta * (beta + 1) * precon.pow(2) * dists / ((sigma**2 + precon * dists).pow(beta + 2))
-            k_x = 2 * beta * (d * precon + precon * score_diff_prod) / ((sigma**2 + precon * dists).pow(beta + 1))
-            k_xy = score_prods.sum(dim=2) / ((sigma**2 + precon * dists).pow(beta))
-            output = coeff * (k + k_x + k_xy)
-        else:
+        if len(PRECON_SIZE) != 1 or PRECON_SIZE[0] != 1:
             raise NotImplementedError
 
-        return output
+        divisor = (sigma ** 2 + precon * dists_squared)
+        k = -4 * beta * (beta + 1) * precon.pow(2) * dists_squared / divisor.pow(beta + 2)
+        k_x = 2 * beta * (d * precon + precon * score_diff_prod) / divisor.pow(beta + 1)
+        k_xy = score_prods / divisor.pow(beta)
+        return coeff * (k + k_x + k_xy)
 
     def cross_stein_matrix(self, sample1, sample2, p, q, score_q, preconditioner=None, sigma=1, beta=0.5):
 
